@@ -1,3 +1,19 @@
-openai-whisper
-yt-dlp
-tkinterdnd2
+# Núcleo — funciona em CPU e GPU.
+# O faster-whisper NÃO depende do PyTorch: usa CTranslate2 (inferência) e
+# PyAV (decodificação de áudio/vídeo, o que dispensa o binário do FFmpeg).
+faster-whisper>=1.2.1
+yt-dlp>=2026.7.4
+tkinterdnd2>=0.6.2
+
+# Aceleração por GPU (NVIDIA).
+# O CTranslate2 precisa de cuBLAS 12 e cuDNN 9. Estes wheels trazem as DLLs;
+# NÃO é necessário instalar o CUDA Toolkit. Em máquinas sem GPU NVIDIA você pode
+# omitir estas duas linhas — o app cai para CPU automaticamente.
+nvidia-cublas-cu12; platform_system != "Darwin"
+nvidia-cudnn-cu12>=9,<10; platform_system != "Darwin"
+
+# Backend legado (opcional). Descomente só se quiser comparar resultados com a
+# implementação de referência da OpenAI. Puxa o PyTorch (~2.5 GB) e, no Windows,
+# a wheel padrão do PyPI é CPU-only — para GPU instale com:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu130
+# openai-whisper

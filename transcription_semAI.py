@@ -15,8 +15,8 @@ Novidades da v2:
 - Progresso real durante a transcrição (não mais barra indeterminada).
 - Exportação em .txt, .srt, .vtt e .json.
 - Cancelamento de lote em andamento.
-- yt-dlp resiliente: playlists, mensagens de erro compreensíveis para bloqueio
-  anti-bot do YouTube, e suporte a cookies do navegador.
+- yt-dlp resiliente: playlists, nova tentativa automática quando o YouTube devolve
+  403 intermitente, e mensagens de erro compreensíveis.
 - FFmpeg deixou de ser obrigatório (a decodificação é feita via PyAV).
 """
 
@@ -86,26 +86,58 @@ _bootstrap_cuda_dlls()
 REQUIRED_MODULES = {
     "faster_whisper": "faster-whisper",
     "yt_dlp": "yt-dlp",
+    "yt_dlp_ejs": "yt-dlp-ejs",
     "tkinterdnd2": "tkinterdnd2",
 }
+
+# O YouTube só libera as URLs de mídia a quem resolver um desafio em JavaScript (o
+# "n challenge"). Isso exige duas coisas: o pacote yt-dlp-ejs (o solucionador) e um
+# interpretador JavaScript no sistema. Faltando qualquer um dos dois, o download
+# falha de forma enganosa — ora "Requested format is not available", ora
+# "HTTP Error 403: Forbidden" — e o erro é intermitente, porque o yt-dlp tenta
+# clientes alternativos do YouTube que às vezes ainda entregam alguma coisa.
+JS_RUNTIMES = {"deno": {}, "node": {}, "bun": {}, "quickjs": {}}
+JS_RUNTIME_COMMANDS = {"deno": "deno", "node": "node", "bun": "bun", "quickjs": "qjs"}
+
+
+def available_js_runtime() -> str:
+    """Nome do runtime JS que o yt-dlp vai usar, ou "" se não houver nenhum."""
+    for name, command in JS_RUNTIME_COMMANDS.items():
+        if shutil.which(command):
+            return name
+    return ""
 
 
 def check_dependencies() -> None:
     missing = [pkg for mod, pkg in REQUIRED_MODULES.items()
                if importlib.util.find_spec(mod) is None]
-    if not missing:
-        return
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror(
-        "Dependências em Falta",
-        "Os seguintes pacotes não estão instalados:\n\n"
-        f"    {', '.join(missing)}\n\n"
-        "Instale com:\n\n"
-        f"    {Path(sys.executable).name} -m pip install -r requirements.txt\n\n"
-        f"Interpretador em uso:\n{sys.executable}",
-    )
-    sys.exit(1)
+    if missing:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "Dependências em Falta",
+            "Os seguintes pacotes não estão instalados:\n\n"
+            f"    {', '.join(missing)}\n\n"
+            "Instale com:\n\n"
+            f"    {Path(sys.executable).name} -m pip install -r requirements.txt\n\n"
+            f"Interpretador em uso:\n{sys.executable}",
+        )
+        sys.exit(1)
+
+    # Sem runtime JS só o YouTube quebra; ficheiros locais continuam a funcionar.
+    # Por isso é aviso, não erro fatal.
+    if not available_js_runtime():
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showwarning(
+            "Runtime JavaScript em Falta",
+            "Nenhum interpretador JavaScript foi encontrado (Node.js, Deno ou Bun).\n\n"
+            "Sem ele o YouTube recusa os downloads, com erros como 'Requested format "
+            "is not available' ou 'HTTP Error 403'.\n\n"
+            "Instale o Node.js em https://nodejs.org e reinicie o app.\n\n"
+            "Transcrever ficheiros locais continua funcionando normalmente.",
+        )
+        root.destroy()
 
 
 check_dependencies()
@@ -407,19 +439,39 @@ class OpenAIWhisperBackend:
 
 URL_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 
+# Uma URL copiada de dentro de uma playlist carrega `list=...` mesmo quando o que
+# se quer é só aquele vídeo — é o caso normal de quem copia do "Assistir mais
+# tarde". As playlists pessoais são privadas e exigem login para serem listadas;
+# como o app baixa sem login, oferecer a expansão delas só geraria um erro.
+PLAYLIST_ID_PATTERN = re.compile(r"[?&]list=([^&]+)")
+PRIVATE_PLAYLIST_IDS = frozenset({"WL", "LL"})  # Assistir mais tarde, Curtidos
+
+
+def is_expandable_playlist(url: str) -> bool:
+    match = PLAYLIST_ID_PATTERN.search(url)
+    return bool(match) and match.group(1) not in PRIVATE_PLAYLIST_IDS
+
+
 YDL_ERROR_HINTS = (
-    (("sign in to confirm", "not a bot", "confirm you"),
-     "O YouTube exigiu verificação anti-bot. Selecione um navegador em "
-     "'Cookies do navegador' nas configurações e faça login no YouTube nele."),
-    (("http error 403", "forbidden"),
-     "Acesso negado (403). Isso normalmente é o anti-bot do YouTube: use a opção "
-     "'Cookies do navegador', ou atualize o yt-dlp (pip install -U yt-dlp)."),
+    (("requested format is not available", "no video formats", "requested format"),
+     "O YouTube não liberou nenhuma faixa de áudio para este vídeo.\n\n"
+     "A causa quase sempre é a falta de um runtime JavaScript, necessário para "
+     "resolver o desafio de assinatura do YouTube. Instale o Node.js "
+     "(https://nodejs.org) ou o Deno e reinicie o app — ele detecta sozinho.\n\n"
+     "Se já houver um runtime instalado, atualize o yt-dlp:\n"
+     "    pip install -U yt-dlp"),
+    (("http error 403", "forbidden", "sign in to confirm", "not a bot"),
+     "O YouTube recusou o download depois de várias tentativas.\n\n"
+     "Costuma ser passageiro — espere alguns minutos e tente de novo. Se persistir, "
+     "atualize o yt-dlp:\n    pip install -U yt-dlp"),
     (("private video", "members-only", "join this channel"),
-     "Vídeo privado ou exclusivo para membros. É preciso usar cookies de uma conta com acesso."),
+     "Vídeo privado ou exclusivo para membros. Este app baixa sem login, "
+     "então não há como acessá-lo."),
     (("video unavailable", "removed by the uploader"),
      "Vídeo indisponível ou removido."),
     (("age-restricted", "age restricted", "inappropriate"),
-     "Vídeo com restrição de idade. Use 'Cookies do navegador' com uma conta logada."),
+     "Vídeo com restrição de idade. Este app baixa sem login, "
+     "então não há como acessá-lo."),
     (("unable to download webpage", "getaddrinfo", "timed out", "connection"),
      "Falha de rede ao contactar o servidor. Verifique sua conexão."),
 )
@@ -434,8 +486,41 @@ def friendly_download_error(exc: Exception) -> str:
     return raw.strip() or "Falha desconhecida no download."
 
 
-def build_ydl_opts(temp_dir: Path, cookies_browser: str,
-                   hook: Optional[Callable] = None) -> Dict[str, Any]:
+class QuietLogger:
+    """Corta o ruído do yt-dlp sem esconder diagnóstico.
+
+    `debug`/`info` são descartados (é o progresso, que já vai para a barra da UI).
+    Avisos e erros continuam a sair no terminal, deduplicados: são eles que dizem
+    coisas como "nenhum runtime JavaScript encontrado", sem o que um erro de
+    formato indisponível fica impossível de diagnosticar. A deduplicação evita que
+    um lote de N tarefas repita a mesma linha 2N vezes.
+    """
+
+    def __init__(self) -> None:
+        self._seen: set = set()
+
+    def _emit(self, level: str, msg: str) -> None:
+        if msg not in self._seen:
+            self._seen.add(msg)
+            print(f"[yt-dlp {level}] {msg}", file=sys.stderr)
+
+    def debug(self, msg: str) -> None: pass
+    def info(self, msg: str) -> None: pass
+    def warning(self, msg: str) -> None: self._emit("aviso", msg)
+    def error(self, msg: str) -> None: self._emit("erro", msg)
+
+
+def base_ydl_opts() -> Dict[str, Any]:
+    return {
+        "quiet": True,
+        "no_warnings": False,  # os avisos são o diagnóstico; o QuietLogger os filtra
+        "noprogress": True,    # o progresso vai para a barra da UI, não para o stdout
+        "logger": QuietLogger(),
+        "js_runtimes": JS_RUNTIMES,
+    }
+
+
+def build_ydl_opts(temp_dir: Path, hook: Optional[Callable] = None) -> Dict[str, Any]:
     """Baixa só a faixa de áudio, sem pós-processamento.
 
     Não há postprocessor FFmpegExtractAudio: o `faster-whisper` decodifica m4a/webm
@@ -443,12 +528,10 @@ def build_ydl_opts(temp_dir: Path, cookies_browser: str,
     FFmpeg e evita escrever um WAV gigante em disco.
     """
     opts: Dict[str, Any] = {
+        **base_ydl_opts(),
         "format": "bestaudio/best",
         "outtmpl": str(temp_dir / "%(id)s.%(ext)s"),  # id é curto e sempre válido
         "noplaylist": True,  # playlists são expandidas explicitamente na UI
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,  # o progresso vai para a barra da UI, não para o stdout
         "retries": 5,
         "fragment_retries": 5,
         "socket_timeout": 30,
@@ -456,8 +539,6 @@ def build_ydl_opts(temp_dir: Path, cookies_browser: str,
     }
     if hook is not None:
         opts["progress_hooks"] = [hook]
-    if cookies_browser and cookies_browser != "Nenhum":
-        opts["cookiesfrombrowser"] = (cookies_browser.lower(),)
     return opts
 
 
@@ -473,6 +554,53 @@ def downloaded_filepath(ydl: "yt_dlp.YoutubeDL", info: Dict[str, Any]) -> Path:
     return Path(ydl.prepare_filename(info))
 
 
+# O YouTube devolve 403 de forma intermitente nas URLs de mídia que ele próprio
+# assinou: a mesma chamada falha e, segundos depois, funciona. Repetir o pedido na
+# mesma URL não adianta — é preciso extrair tudo de novo para receber uma URL nova,
+# e é por isso que o `retries` do yt-dlp não cobre este caso.
+#
+# As esperas são longas de propósito. Depois de vários downloads seguidos o YouTube
+# passa a limitar o IP, e aí uma pausa de 2 ou 3 segundos não serve de nada: é
+# preciso dar tempo real para a janela de limitação expirar.
+DOWNLOAD_RETRY_DELAYS = (5, 20, 45)
+DOWNLOAD_ATTEMPTS = len(DOWNLOAD_RETRY_DELAYS) + 1
+
+RETRIABLE_DOWNLOAD_ERRORS = (
+    "http error 403", "forbidden", "unable to download video data",
+    "requested format is not available", "unable to download webpage",
+    "too many requests", "http error 429",
+)
+
+
+def is_retriable_download_error(exc: Exception) -> bool:
+    low = str(exc).lower()
+    return any(needle in low for needle in RETRIABLE_DOWNLOAD_ERRORS)
+
+
+def download_media(url: str, temp_dir: Path, hook: Optional[Callable],
+                   cancel: threading.Event,
+                   on_retry: Optional[Callable[[int, int], None]] = None,
+                   ) -> Tuple[Path, Dict[str, Any]]:
+    """Baixa a faixa de áudio de `url`, reextraindo em falhas intermitentes."""
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            with yt_dlp.YoutubeDL(build_ydl_opts(temp_dir, hook)) as ydl:
+                info = ydl.extract_info(url, download=True)
+                return downloaded_filepath(ydl, info), info
+        except Exception as exc:
+            if (cancel.is_set() or attempt == DOWNLOAD_ATTEMPTS
+                    or not is_retriable_download_error(exc)):
+                raise
+            delay = DOWNLOAD_RETRY_DELAYS[attempt - 1]
+            if on_retry is not None:
+                on_retry(attempt + 1, delay)
+            # `cancel.wait` em vez de `time.sleep`: numa espera de 45 s o botão
+            # Cancelar precisa continuar a responder.
+            if cancel.wait(delay):
+                raise
+    raise AssertionError("inalcançável: o laço acima sempre retorna ou levanta")
+
+
 def safe_output_stem(title: str, fallback: str) -> str:
     stem = yt_dlp.utils.sanitize_filename(title or fallback, restricted=False)
     stem = stem.strip().rstrip(".")  # Windows rejeita nomes terminados em ponto
@@ -481,8 +609,7 @@ def safe_output_stem(title: str, fallback: str) -> str:
 
 def expand_playlist(url: str) -> List[str]:
     """Resolve uma URL de playlist na lista de URLs dos vídeos (sem baixar nada)."""
-    opts = {"extract_flat": "in_playlist", "quiet": True, "no_warnings": True,
-            "skip_download": True}
+    opts = {**base_ydl_opts(), "extract_flat": "in_playlist", "skip_download": True}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     entries = info.get("entries") or []
@@ -542,7 +669,6 @@ class AudioTranscriberApp:
         "Japonês": "ja", "Chinês": "zh", "Russo": "ru", "Coreano": "ko",
         "Árabe": "ar", "Holandês": "nl", "Polaco": "pl", "Turco": "tr",
     }
-    COOKIE_BROWSERS = ["Nenhum", "Chrome", "Firefox", "Edge", "Brave", "Opera", "Vivaldi"]
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -677,15 +803,8 @@ class AudioTranscriberApp:
         backend_combo.grid(row=2, column=1, padx=5, pady=4, sticky="ew")
         backend_combo.bind("<<ComboboxSelected>>", lambda _e: self._refresh_estimate())
 
-        ttk.Label(grid, text="Cookies do navegador:").grid(row=2, column=2, padx=(15, 5),
-                                                          pady=4, sticky="w")
-        self.cookies_var = tk.StringVar(value=self.settings.get("cookies", "Nenhum"))
-        cookies_combo = ttk.Combobox(grid, textvariable=self.cookies_var,
-                                     values=self.COOKIE_BROWSERS, state="readonly", width=15)
-        cookies_combo.grid(row=2, column=3, padx=5, pady=4, sticky="ew")
-
         formats_frame = ttk.Frame(grid)
-        formats_frame.grid(row=2, column=4, padx=15, pady=4, sticky="w")
+        formats_frame.grid(row=2, column=2, columnspan=3, padx=(15, 5), pady=4, sticky="w")
         ttk.Label(formats_frame, text="Salvar como:").pack(side=tk.LEFT)
         self.format_vars: Dict[str, tk.BooleanVar] = {}
         saved_formats = self.settings.get("formats", ["txt"])
@@ -699,7 +818,7 @@ class AudioTranscriberApp:
         grid.columnconfigure(1, weight=1)
         grid.columnconfigure(3, weight=1)
         self.controls_to_toggle += [model_combo, self.compute_combo, lang_combo,
-                                    translate_check, vad_check, backend_combo, cookies_combo]
+                                    translate_check, vad_check, backend_combo]
 
         output = ttk.LabelFrame(self.main_frame, text="3. Pasta de Destino", padding="10")
         output.pack(fill=tk.X, padx=10, pady=5)
@@ -837,12 +956,16 @@ class AudioTranscriberApp:
                 )
             if not valid:
                 return
-            playlists = [u for u in valid if "list=" in u]
+            playlists = [u for u in valid if is_expandable_playlist(u)]
             if playlists and messagebox.askyesno(
-                "Playlist detectada",
-                f"Detectei {len(playlists)} URL(s) de playlist.\n\n"
-                "Deseja expandir em tarefas individuais?\n"
-                "(Se escolher Não, apenas o vídeo referenciado será baixado.)"
+                "Link dentro de uma playlist",
+                f"{len(playlists)} de {len(valid)} link(s) apontam para um vídeo que "
+                "está dentro de uma playlist.\n\n"
+                "SIM — adicionar TODOS os vídeos dessas playlists à lista. Podem ser "
+                "dezenas, e cada um vira uma transcrição separada.\n\n"
+                "NÃO — adicionar só o vídeo de cada link, ignorando o resto da "
+                "playlist.\n\n"
+                "Na dúvida, escolha NÃO."
             ):
                 self._update_status("Lendo playlist(s)...")
                 threading.Thread(target=self._expand_playlists_task,
@@ -998,7 +1121,6 @@ class AudioTranscriberApp:
             task_type = "translate" if self.translate_var.get() else "transcribe"
             use_vad = self.vad_var.get()
             formats = self._selected_formats()
-            cookies = self.cookies_var.get()
             save_to_disk = self.output_directory.is_dir()
 
             self.task_queue.put(("status", f"Carregando modelo '{model_name}' "
@@ -1014,7 +1136,7 @@ class AudioTranscriberApp:
                 self.task_queue.put(("total_progress", index / total * 100))
                 self.task_queue.put(("task_progress", 0))
                 try:
-                    self._process_single_task(task_id, task, temp_dir, cookies, language,
+                    self._process_single_task(task_id, task, temp_dir, language,
                                               task_type, use_vad, formats, save_to_disk)
                 except Cancelled:
                     self._mark_remaining_cancelled(task_ids[index:])
@@ -1028,7 +1150,7 @@ class AudioTranscriberApp:
         finally:
             self.task_queue.put(("finish", None))
 
-    def _process_single_task(self, task_id: str, task: Task, temp_dir: Path, cookies: str,
+    def _process_single_task(self, task_id: str, task: Task, temp_dir: Path,
                              language: Optional[str], task_type: str, use_vad: bool,
                              formats: List[str], save_to_disk: bool) -> None:
         media_path: Optional[Path] = None
@@ -1038,12 +1160,15 @@ class AudioTranscriberApp:
         if task.is_url:
             self.task_queue.put(("update_status", (task_id, "Baixando...")))
             try:
-                opts = build_ydl_opts(temp_dir, cookies, self._yt_dlp_hook)
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(task.source, download=True)
-                    media_path = downloaded_filepath(ydl, info)
-                    temp_file = media_path
-                    output_stem = safe_output_stem(info.get("title", ""), media_path.stem)
+                media_path, info = download_media(
+                    task.source, temp_dir, self._yt_dlp_hook, self.cancel_event,
+                    lambda n, wait: self.task_queue.put((
+                        "update_status",
+                        (task_id, f"Recusado — aguardando {wait}s "
+                                  f"(tentativa {n} de {DOWNLOAD_ATTEMPTS})"))),
+                )
+                temp_file = media_path
+                output_stem = safe_output_stem(info.get("title", ""), media_path.stem)
             except Exception as exc:
                 # O hook de progresso levanta Cancelled, que o yt-dlp reembrulha.
                 if self.cancel_event.is_set():
@@ -1232,7 +1357,6 @@ class AudioTranscriberApp:
             "compute_type": self.compute_var.get(),
             "language": self.lang_var.get(),
             "vad": self.vad_var.get(),
-            "cookies": self.cookies_var.get(),
             "formats": self._selected_formats(),
             "output_dir": str(self.output_directory) if self.output_directory.is_dir() else "",
         })

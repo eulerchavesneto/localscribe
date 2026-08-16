@@ -5,6 +5,13 @@ faster-whisper>=1.2.1
 yt-dlp>=2026.7.4
 tkinterdnd2>=0.6.2
 
+# Obrigatório para o YouTube. O YouTube exige resolver um desafio em JavaScript
+# ("n challenge") para liberar as URLs de mídia; sem isto o download falha com
+# "Requested format is not available" ou "HTTP Error 403: Forbidden".
+# Este pacote traz o solucionador localmente, dispensando --remote-components.
+# Também é preciso um runtime JavaScript na máquina: Node.js, Deno ou Bun.
+yt-dlp-ejs>=0.8.0
+
 # Aceleração por GPU (NVIDIA).
 # O CTranslate2 precisa de cuBLAS 12 e cuDNN 9. Estes wheels trazem as DLLs;
 # NÃO é necessário instalar o CUDA Toolkit. Em máquinas sem GPU NVIDIA você pode

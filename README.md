@@ -94,8 +94,16 @@ Measured on an RTX 3050 4GB with `beam_size=5`. If a model doesn't fit in VRAM i
 
 ## Troubleshooting
 
-**"Requested format is not available" / "HTTP Error 403"**
-Almost always a missing or outdated JavaScript runtime — check the badge in the header and see [above](#javascript-runtime). If your runtime is fine, update yt-dlp: `pip install -U yt-dlp`.
+**"Requested format is not available"**
+Almost always a missing or outdated JavaScript runtime — check the badge in the header and see [above](#javascript-runtime).
+
+**"unable to download video data: HTTP Error 403: Forbidden"**
+This one is *not* a network problem, and retrying doesn't help. Extraction succeeds — yt-dlp obtains the format URLs — but YouTube then refuses to serve the media, because it now demands a [Proof-of-Origin (PO) token](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide) on Google Video Server requests for its default player clients.
+
+LocalScribe works around this by requesting clients that are exempt from the GVS token requirement, in order: `web_embedded`, `mweb`, `tv`, `web_safari` (see `YOUTUBE_PLAYER_CLIENTS`). If 403s come back, YouTube has probably widened enforcement — try reordering that list, or install a PO token provider such as [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider).
+
+**"Sign in to confirm you're not a bot"**
+Bot detection, usually triggered by many downloads in quick succession. It clears on its own; retrying immediately won't help.
 
 **The header says CPU but I have an NVIDIA card**
 Click **Why no GPU?** for the specific reason. The usual fix is installing the CUDA libraries, which do *not* require the CUDA Toolkit:

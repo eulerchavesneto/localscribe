@@ -528,10 +528,22 @@ YDL_ERROR_HINTS = (
      "or Deno and restart the app — it detects them automatically.\n\n"
      "If a runtime is already installed, update yt-dlp:\n"
      "    pip install -U yt-dlp"),
-    (("http error 403", "forbidden", "sign in to confirm", "not a bot"),
-     "YouTube refused the download after several attempts.\n\n"
-     "This is usually temporary — wait a few minutes and try again. If it "
-     "persists, update yt-dlp:\n    pip install -U yt-dlp"),
+    (("sign in to confirm", "not a bot", "confirm you're not a bot"),
+     "YouTube flagged these requests as automated.\n\n"
+     "This is bot detection, not a temporary glitch — retrying usually will "
+     "not help. It normally clears on its own after a while, and is more "
+     "likely if many videos were downloaded in quick succession.\n\n"
+     "If it persists, YouTube is asking for an authenticated session, which "
+     "this app deliberately does not provide."),
+    (("http error 403", "forbidden"),
+     "YouTube refused to serve the media file (HTTP 403).\n\n"
+     "Extraction worked, so this is not a network problem — YouTube is "
+     "rejecting the download itself. That normally means it is demanding a "
+     "Proof-of-Origin token for the player clients being used.\n\n"
+     "This app already works around it by preferring clients that are exempt. "
+     "Seeing this error anyway suggests YouTube widened the requirement, and "
+     "the workaround needs revisiting:\n"
+     "    https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide"),
     (("private video", "members-only", "join this channel"),
      "Private or members-only video. This app downloads without signing in, "
      "so there is no way to reach it."),
@@ -546,12 +558,19 @@ YDL_ERROR_HINTS = (
 
 
 def friendly_download_error(exc: Exception) -> str:
-    raw = str(exc)
+    """Explain a download failure without throwing away the evidence.
+
+    The hint is the actionable part, but it is a guess based on substring
+    matching. Returning it alone hides which error actually occurred, so the
+    raw message is always appended — a wrong guess then costs a reader a few
+    seconds instead of sending them after the wrong problem.
+    """
+    raw = str(exc).strip()
     low = raw.lower()
     for needles, hint in YDL_ERROR_HINTS:
         if any(needle in low for needle in needles):
-            return hint
-    return raw.strip() or "Unknown download failure."
+            return f"{hint}\n\nTechnical detail:\n{raw}"
+    return raw or "Unknown download failure."
 
 
 class QuietLogger:
@@ -588,6 +607,25 @@ def base_ydl_opts() -> Dict[str, Any]:
     }
 
 
+# YouTube now enforces Proof-of-Origin (PO) tokens on Google Video Server (GVS)
+# requests for its default player clients. Extraction still succeeds — yt-dlp
+# gets the format URLs — but fetching the actual media returns
+# "unable to download video data: HTTP Error 403: Forbidden". Because the
+# extraction step works, the failure looks like a transient network problem
+# rather than the policy change it is.
+#
+# Per yt-dlp's PO Token Guide, some clients are exempt from the GVS token
+# requirement. Measured against a spread of videos: `web_embedded` and `mweb`
+# succeeded on every one, while the defaults (and `android_vr`) failed on all
+# but the oldest; `ios` returned no formats. The rest are ordered fallbacks —
+# yt-dlp walks the list until a client yields a usable stream.
+#
+# The alternative is a PO token provider plugin (bgutil-ytdlp-pot-provider),
+# which is heavier: an extra dependency plus a helper service. Client selection
+# needs neither, so it stays the default here.
+YOUTUBE_PLAYER_CLIENTS = ["web_embedded", "mweb", "tv", "web_safari"]
+
+
 def build_ydl_opts(temp_dir: Path, hook: Optional[Callable] = None) -> Dict[str, Any]:
     """Download the audio track only, with no post-processing.
 
@@ -605,6 +643,8 @@ def build_ydl_opts(temp_dir: Path, hook: Optional[Callable] = None) -> Dict[str,
         "fragment_retries": 5,
         "socket_timeout": 30,
         "nocheckcertificate": False,
+        # Scoped to the youtube extractor; other sites are unaffected.
+        "extractor_args": {"youtube": {"player_client": YOUTUBE_PLAYER_CLIENTS}},
     }
     if hook is not None:
         opts["progress_hooks"] = [hook]

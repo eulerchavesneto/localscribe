@@ -1,5 +1,5 @@
 # coding: utf-8
-"""Whisper Transcriber — a local audio/video transcription desktop app.
+"""LocalScribe — a private audio/video transcription desktop app.
 
 Transcribes local media files or online videos with OpenAI's Whisper models,
 running entirely on your machine. Nothing is ever uploaded to a third-party API.
@@ -701,14 +701,19 @@ def expand_playlist(url: str) -> List[str]:
 
 # --- Settings persistence ----------------------------------------------------
 
-SETTINGS_FILE = Path.home() / ".transcription_semai.json"
+SETTINGS_FILE = Path.home() / ".localscribe.json"
+# Preferences written before the project was renamed; read once so an upgrade
+# does not silently reset the user's settings.
+LEGACY_SETTINGS_FILE = Path.home() / ".transcription_semai.json"
 
 
 def load_settings() -> Dict[str, Any]:
-    try:
-        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    for path in (SETTINGS_FILE, LEGACY_SETTINGS_FILE):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+    return {}
 
 
 def save_settings(data: Dict[str, Any]) -> None:
@@ -980,7 +985,7 @@ class DnDCTk(ctk.CTk, TkinterDnD.DnDWrapper):
         self.TkdndVersion = TkinterDnD._require(self)
 
 
-class TranscriberApp:
+class LocalScribeApp:
     LANGUAGES = {
         "Auto-detect": None, "English": "en", "Portuguese": "pt", "Spanish": "es",
         "French": "fr", "German": "de", "Italian": "it", "Japanese": "ja",
@@ -993,7 +998,7 @@ class TranscriberApp:
 
     def __init__(self, root: DnDCTk):
         self.root = root
-        self.root.title("Whisper Transcriber")
+        self.root.title("LocalScribe")
         self.root.geometry("1120x860")
         self.root.minsize(960, 720)
         self.root.configure(fg_color=color("bg"))
@@ -1099,7 +1104,7 @@ class TranscriberApp:
                                                                       padx=(0, 10))
         text_block = ctk.CTkFrame(title, fg_color="transparent")
         text_block.pack(side="left")
-        ctk.CTkLabel(text_block, text="Whisper Transcriber", anchor="w",
+        ctk.CTkLabel(text_block, text="LocalScribe", anchor="w",
                      text_color=color("text"),
                      font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w")
         ctk.CTkLabel(text_block, text="Local speech-to-text — nothing leaves your machine",
@@ -1782,7 +1787,7 @@ class TranscriberApp:
             self._set_status("Cancelling — the current task will stop shortly…")
 
     def _process_batch(self, task_ids: List[str]) -> None:
-        temp_root = Path(tempfile.gettempdir()) / "whisper_transcriber"
+        temp_root = Path(tempfile.gettempdir()) / "localscribe"
         temp_root.mkdir(parents=True, exist_ok=True)
         try:
             # Only build a backend when the selection actually changed; the old
@@ -2132,7 +2137,7 @@ class TranscriberApp:
 
 def main() -> None:
     root = DnDCTk()
-    TranscriberApp(root)
+    LocalScribeApp(root)
     root.mainloop()
 
 

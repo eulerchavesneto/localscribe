@@ -1,4 +1,4 @@
-# 🎙️ Whisper Transcriber
+# 🎙️ LocalScribe
 
 A desktop app that transcribes audio and video with [OpenAI's Whisper](https://github.com/openai/whisper) — running **entirely on your machine**. No API keys, no uploads, no third-party services.
 
@@ -30,8 +30,8 @@ Built with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for real 
 ## Installation
 
 ```bash
-git clone https://github.com/eulerchavesneto/transcription-semAI.git
-cd transcription-semAI
+git clone https://github.com/eulerchavesneto/localscribe.git
+cd localscribe
 
 python -m venv venv
 venv\Scripts\activate          # Windows
@@ -43,7 +43,7 @@ pip install -r requirements.txt
 Then run it:
 
 ```bash
-python transcription_semAI.py
+python localscribe.py
 ```
 
 The first transcription downloads the selected Whisper model (a few hundred MB to ~3 GB depending on the model). That happens once and is cached afterwards.

@@ -1,3 +1,36 @@
-openai-whisper
-yt-dlp
-tkinterdnd2
+# Core — works on both CPU and GPU.
+# faster-whisper does NOT depend on PyTorch: it uses CTranslate2 for inference
+# and PyAV for audio/video decoding, which removes the FFmpeg requirement.
+faster-whisper>=1.2.1
+yt-dlp>=2026.7.4
+tkinterdnd2>=0.6.2
+
+# User interface.
+customtkinter>=6.0.0
+
+# Required for YouTube. YouTube makes clients solve a JavaScript challenge
+# (the "n challenge") before releasing media URLs; without it downloads fail
+# with "Requested format is not available" or "HTTP Error 403: Forbidden".
+# This package ships the solver locally, so --remote-components is not needed.
+#
+# IMPORTANT: a JavaScript runtime must also be installed, and it has to meet
+# yt-dlp's minimum version. Node.js 18 is NOT enough.
+#     Node.js 22+    https://nodejs.org
+#     Deno 2.3+      https://deno.com
+#     Bun 1.2.11+    https://bun.sh
+# The app probes the runtime on startup and reports it as missing or too old.
+# Transcribing local files works fine without one.
+yt-dlp-ejs>=0.8.0
+
+# GPU acceleration (NVIDIA).
+# CTranslate2 needs cuBLAS 12 and cuDNN 9. These wheels ship the DLLs, so the
+# CUDA Toolkit does NOT have to be installed. On machines without an NVIDIA GPU
+# you can drop these two lines — the app falls back to CPU automatically.
+nvidia-cublas-cu12; platform_system != "Darwin"
+nvidia-cudnn-cu12>=9,<10; platform_system != "Darwin"
+
+# Legacy backend (optional). Uncomment only to compare against OpenAI's
+# reference implementation. Pulls in PyTorch (~2.5 GB) and, on Windows, the
+# default PyPI wheel is CPU-only — for GPU install it with:
+#     pip install torch --index-url https://download.pytorch.org/whl/cu130
+# openai-whisper

@@ -92,6 +92,50 @@ Measured on an RTX 3050 4GB with `beam_size=5`. If a model doesn't fit in VRAM i
 
 ---
 
+## Transcribing a whole course (command line)
+
+`course_transcribe.py` batch-transcribes an entire online course hosted on **Panda Video** (currently set up for the Desec Academy, `academy.desecsecurity.com`) without watching or exporting anything by hand. It reuses the same faster-whisper engine as the app and has no GUI. It only works for videos you have legitimate access to, and the output is for personal study.
+
+**1. Build the manifest.** Log in to the course site in your browser and open any lesson. Open the console (`F12` → Console), paste the contents of [`course_manifest.js`](course_manifest.js) and press Enter. It reads each lesson page with your own session (about one per second), then downloads a `manifest.json` with module, title and video id for every lesson. Keep the tab open until it finishes.
+
+**2. List the modules.**
+
+```bash
+python course_transcribe.py manifest.json --list
+```
+
+**3. Transcribe.** Pick modules by the numbers shown by `--list`, or omit `--modules` to do everything:
+
+```bash
+python course_transcribe.py manifest.json --modules 4 5 --model small
+python course_transcribe.py manifest.json --timestamps        # whole course, with [hh:mm:ss]
+```
+
+| Option | Default | |
+|---|---|---|
+| `--modules N [N ...]` | all | Module numbers from `--list` |
+| `--model` | `small` | `tiny`, `base`, `small`, `medium`, `large-v3-turbo`, … |
+| `--language` | `pt` | Language code passed to Whisper |
+| `--timestamps` | off | Prefix every segment with `[hh:mm:ss]` |
+| `--out` | `transcricoes` | Output folder |
+| `--referer` | Desec Academy | Site of the course; Panda only serves video with that `Referer` |
+
+Output, ready to feed to an AI assistant:
+
+```
+transcricoes/
+├── 04_introducao-ao-penetration-testing.md     # whole module in one file
+└── 04_introducao-ao-penetration-testing/
+    ├── 001_o-que-e-pentest.md                  # one file per lesson
+    └── 002_...
+```
+
+It is resumable: lessons that already have a `.md` are skipped, so you can stop and run it again. A lesson that fails is reported and the batch continues. Each video is downloaded at the lowest quality (the audio is the same), transcribed, then deleted. `manifest.json` and `transcricoes/` are git-ignored because they are course content.
+
+> On CPU a full course takes days. Start with a few modules and the `small` model, or use an NVIDIA GPU with `--model large-v3-turbo`.
+
+---
+
 ## Troubleshooting
 
 **"Requested format is not available"**

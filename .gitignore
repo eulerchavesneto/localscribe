@@ -3,3 +3,7 @@ __pycache__/
 .venv/
 venv/
 .env
+
+# Conteúdo do curso (não versionar)
+manifest.json
+transcricoes/

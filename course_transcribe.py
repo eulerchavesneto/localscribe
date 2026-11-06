@@ -25,6 +25,12 @@ import yt_dlp
 from faster_whisper import WhisperModel
 
 REFERER = "https://academy.desecsecurity.com/"
+DEFAULT_PROMPT = (
+    "Aula de pentest e segurança da informação em português do Brasil. Termos: "
+    "Nmap, Metasploit, Burp Suite, Kali Linux, Wireshark, SQL injection, XSS, "
+    "exploit, payload, reverse shell, IANA, ARIN, LACNIC, DNS, TCP/IP, OSINT, "
+    "Active Directory, Windows, Linux, hash, firewall, VPN, Nessus."
+)
 
 
 def slug(text, limit=60):
@@ -53,9 +59,14 @@ def download(lib, video, dest_dir, referer):
     return next(Path(dest_dir).glob("aula.*"))
 
 
-def transcribe(model, path, language):
+def transcribe(model, path, language, prompt):
     segments, info = model.transcribe(
-        str(path), language=language, vad_filter=True, beam_size=5
+        str(path),
+        language=language,
+        vad_filter=True,
+        beam_size=5,
+        initial_prompt=prompt or None,
+        condition_on_previous_text=False,  # evita laços de repetição em trechos longos
     )
     return [(s.start, s.text.strip()) for s in segments], info.duration
 
@@ -76,6 +87,8 @@ def main():
     ap.add_argument("--modules", nargs="*", type=int, help="números dos módulos (veja --list); padrão: todos")
     ap.add_argument("--model", default="small", help="tiny, base, small, medium, large-v3-turbo...")
     ap.add_argument("--language", default="pt")
+    ap.add_argument("--compute-type", default="auto", help="auto, float16 (GPU, mais preciso), int8 (CPU)")
+    ap.add_argument("--prompt", default=DEFAULT_PROMPT, help="vocabulário que ajuda o Whisper com termos técnicos")
     ap.add_argument("--timestamps", action="store_true", help="inclui [hh:mm:ss] em cada trecho")
     ap.add_argument("--referer", default=REFERER, help="site do curso (o Panda só serve o vídeo com esse Referer)")
     ap.add_argument("--list", action="store_true", help="só lista os módulos e sai")
@@ -109,12 +122,12 @@ def main():
                 continue
             if model is None:
                 print(f"Carregando modelo {args.model}...")
-                model = WhisperModel(args.model, device="auto", compute_type="int8")
+                model = WhisperModel(args.model, device="auto", compute_type=args.compute_type)
             tmp = tempfile.mkdtemp(prefix="aula_")
             try:
                 print(f"> {label}")
                 media = download(lesson["lib"], lesson["video"], tmp, args.referer)
-                segments, duration = transcribe(model, media, args.language)
+                segments, duration = transcribe(model, media, args.language, args.prompt)
                 target.write_text(
                     lesson_markdown(m["module"], lesson["title"], segments, args.timestamps),
                     encoding="utf-8",

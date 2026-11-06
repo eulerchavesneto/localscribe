@@ -116,6 +116,8 @@ python course_transcribe.py manifest.json --timestamps        # whole course, wi
 | `--modules N [N ...]` | all | Module numbers from `--list` |
 | `--model` | `small` | `tiny`, `base`, `small`, `medium`, `large-v3-turbo`, … |
 | `--language` | `pt` | Language code passed to Whisper |
+| `--compute-type` | `auto` | `float16` is the most accurate on an NVIDIA GPU; `int8` for CPU |
+| `--prompt` | security vocabulary | Terms (Nmap, Metasploit, …) that help Whisper spell technical words correctly |
 | `--timestamps` | off | Prefix every segment with `[hh:mm:ss]` |
 | `--out` | `transcricoes` | Output folder |
 | `--referer` | Desec Academy | Site of the course; Panda only serves video with that `Referer` |
